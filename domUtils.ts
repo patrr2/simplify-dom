@@ -228,6 +228,7 @@ interface Element {
     updateCachedComputedStyle(): void;
     getUpperCaseTagName(): string;
     checkParentsCssVisibility(maxDepth ?: number): boolean;
+    filterOutTailwindClasses(): void;
 }
 
 interface Node {
@@ -560,6 +561,7 @@ HTMLDivElement.prototype.isImage = function () : boolean {
 
 interface Element {
     deepCloneWithReferences(): Element;
+    deepCloneWithReferencesAndShadows(): Element;
     getOriginalElement: () => Element;
 }
 
@@ -586,34 +588,107 @@ Node.prototype.getOriginalNode = function() : Node {
 }
 
 Element.prototype.deepCloneWithReferences = function() {
-    // Helper function to get all nodes (including text nodes)
-    function getAllNodes(element : Node) {
-        let allNodes = [element];
-        for (let child of Array.from(element.childNodes)) {
-            allNodes.push(...getAllNodes(child));
-        }
-        return allNodes;
-    }
-
     let clone = this.cloneNode(true) as Element;
 
-    let originalNodes = getAllNodes(this);
-    let clonedNodes = getAllNodes(clone);
+    const addReferences = () => {
+        const getOrderedNodeList = (element : Node) => {
+            let allNodes = [element];
+            for (let child of Array.from(element.childNodes)) {
+                allNodes.push(...getOrderedNodeList(child));
+            }
+            return allNodes;
+        }
 
-    if (originalNodes.length !== clonedNodes.length) {
-        throw new Error('originalNodes.length !== clonedNodes.length');
+        let originalNodes = getOrderedNodeList(this);
+        let clonedNodes = getOrderedNodeList(clone);
+
+        if (originalNodes.length !== clonedNodes.length) {
+            throw new Error('originalNodes.length !== clonedNodes.length');
+        }
+
+        for (let i = 0; i < originalNodes.length; i++) {
+            let originalNode = originalNodes[i]; 
+            let clonedNode = clonedNodes[i];
+
+            // console.log('adding reference', originalNode, clonedNode);
+            clonedNode.originalNode = originalNode;
+        }
     }
 
-    for (let i = 0; i < originalNodes.length; i++) {
-        let originalNode = originalNodes[i]; 
-        let clonedNode = clonedNodes[i];
-
-        // console.log('adding reference', originalNode, clonedNode);
-        clonedNode.originalNode = originalNode;
-    }
+    addReferences()
 
     return clone;
 }
+
+Element.prototype.deepCloneWithReferencesAndShadows = function() {
+    let clone = this.cloneNode(true) as Element;
+
+    // Function to recursively clone shadow roots
+    const cloneShadowRoots = (originalNode: Node, clonedNode: Node) => {
+        if (originalNode instanceof Element && clonedNode instanceof Element) {
+            const originalShadowRoot = originalNode.shadowRoot;
+            if (originalShadowRoot) {
+                if (!clonedNode.shadowRoot) {
+                    // Create a new shadow root on the cloned element with the same mode
+                    const clonedShadowRoot = clonedNode.attachShadow({ mode: originalShadowRoot.mode });
+
+                    for (let ogChild of Array.from(originalShadowRoot.childNodes)) {
+                        const cloned = ogChild.cloneNode(true);
+                        clonedShadowRoot.appendChild(cloned);
+                    }
+
+                    for (let i = 0; i < originalShadowRoot.children.length; i++) {
+                        cloneShadowRoots(originalShadowRoot.children[i], clonedShadowRoot.children[i]);
+                    }
+                } else {
+                    console.log('warning, shadow root already exists in clone unexpectedly')
+                }
+            }
+        }
+
+        // Process child nodes recursively to handle nested elements
+        const originalChildren = originalNode.childNodes;
+        const clonedChildren = clonedNode.childNodes;
+        for (let i = 0; i < originalChildren.length; i++) {
+            cloneShadowRoots(originalChildren[i], clonedChildren[i]);
+        }
+    };
+
+    // Clone shadow roots starting from the root elements
+    cloneShadowRoots(this, clone);
+
+    const addReferences = () => {
+        // Traverse nodes including those in shadow roots
+        const getOrderedNodeList = (element: Node): Node[] => {
+            let allNodes: Node[] = [element];
+            // Add all child nodes
+            for (const child of Array.from(element.childNodes)) {
+                allNodes.push(...getOrderedNodeList(child));
+            }
+            // If element is an Element, add its shadow root subtree
+            if (element instanceof Element && element.shadowRoot) {
+                allNodes.push(...getOrderedNodeList(element.shadowRoot));
+            }
+            return allNodes;
+        };
+
+        const originalNodes = getOrderedNodeList(this);
+        const clonedNodes = getOrderedNodeList(clone);
+
+        if (originalNodes.length !== clonedNodes.length) {
+            throw new Error('Mismatch in node counts after cloning');
+        }
+
+        // Assign original references to cloned nodes
+        for (let i = 0; i < originalNodes.length; i++) {
+            clonedNodes[i].originalNode = originalNodes[i];
+        }
+    };
+
+    addReferences();
+
+    return clone;
+};
 
 interface Element {
     unfold(processChild : (el : Node) => void): Node[]
@@ -625,7 +700,7 @@ Element.prototype.concatPropertiesFrom = function(element : Element, properties 
     for (let attr of Array.from(element.attributes)) {
         if (properties === 'ALL' || properties.has(attr.name.toLowerCase())) {
             if (this.hasAttribute(attr.name)) {
-                this.setAttribute(attr.name, this.getAttribute(attr.name) + ' ' + attr.value)
+                this.setAttribute(attr.name, this.getAttribute(attr.name) + ' ' + attr.value) // todo: add trimming
             } else {
                 this.setAttribute(attr.name, attr.value)
             }
@@ -646,5 +721,21 @@ Element.prototype.unfold = function(processChild : (el : Node) => void = (el : N
     }
 
     return children
+}
+
+Element.prototype.filterOutTailwindClasses = function() : void {
+    // Define a list of Tailwind prefixes to filter out
+    const tailwindClassStarts = ['sm:', 'md:', 'lg:', 'xl:', '2xl:', 'xs:', 'nd:', 'hover:', 'focus:', 'active:', 'disabled:', 'checked:', 'group-hover:', 'group-focus:', 'focus-within:', 'focus-visible:', 'dark:', 'light:', 'motion-safe:', 'motion-reduce:', 'portrait:', 'landscape:', 'first:', 'last:', 'odd:', 'even:', 'only:', 'target:', 'default:', 'indeterminate:', 'required:', 'valid:', 'invalid:', 'placeholder-shown:', 'autofill:', 'read-only:', 'empty:', 'before:', 'after:', 'first-line:', 'first-letter:', 'marker:', 'selection:', 'file:', 'backdrop:', 'container', 'block', 'inline', 'inline-block', 'flex', 'inline-flex', 'grid', 'inline-grid', 'table', 'hidden', 'static', 'fixed', 'absolute', 'relative', 'sticky', 'inset-', 'top-', 'right-', 'bottom-', 'left-', 'z-', 'float-', 'clear-', 'm-', 'mt-', 'mr-', 'mb-', 'ml-', 'mx-', 'my-', 'p-', 'pt-', 'pr-', 'pb-', 'pl-', 'px-', 'py-', 'gap-', 'space-x-', 'space-y-', 'w-', 'min-w-', 'max-w-', 'h-', 'min-h-', 'max-h-', 'aspect-', 'font-', 'text-', 'align-', 'leading-', 'tracking-', 'underline', 'line-through', 'no-underline', 'uppercase', 'lowercase', 'capitalize', 'truncate', 'text-ellipsis', 'text-clip', 'list-', 'bg-', 'bg-gradient-to-', 'from-', 'via-', 'to-', 'bg-opacity-', 'border-', 'border-t-', 'border-dashed', 'border-dotted', 'rounded-', 'rounded-t-', 'rounded-b-', 'divide-x-', 'divide-y-', 'divide-', 'ring-', 'ring-offset-', 'shadow-', 'opacity-', 'mix-blend-', 'bg-blend-', 'transition-', 'duration-', 'ease-', 'delay-', 'animate-', 'transform', 'scale-', 'rotate-', 'translate-x-', 'skew-x-', 'origin-', 'cursor-', 'resize-', 'scroll-', 'snap-', 'overscroll-', 'select-', 'fill-', 'stroke-', 'stroke-w-', 'sr-only', 'not-sr-only', 'table-', 'border-collapse', 'border-spacing-', 'flex-', 'flex-row', 'flex-col', 'flex-wrap', 'order-', 'grow-', 'shrink-', 'grid-cols-', 'grid-rows-', 'col-', 'row-', 'auto-cols-', 'auto-rows-', 'columns-', 'filter', 'blur-', 'brightness-', 'contrast-', 'backdrop-filter', 'backdrop-blur-', 'no-visited', 'visible', 'invisible', 'prose', 'form-', 'line-clamp-', 'enabled:', 'embed-s:', 'items-center', 'pointer-events', 'justify-center', 'overflow-', '-', '[', 'whitespace-', 'justify-', 's:'];
+
+    // Split the className into individual classes
+    const classes = this.className.split(' ');
+
+    // Filter out classes that match any Tailwind prefix
+    const filteredClasses = classes.filter(cls => {
+        return !tailwindClassStarts.some(prefix => cls.startsWith(prefix));
+    });
+
+    // Join the remaining classes back into a single string
+    this.className = filteredClasses.filter(x => x).join(' ');
 }
 

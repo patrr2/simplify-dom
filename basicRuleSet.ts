@@ -14,6 +14,14 @@ const elementUnfoldRules : ElementUnfoldRule[] = [
 
 const elementRemovePreChildrenRules  : ElementRemovePreChildrenRule[] = [
     {
+        name: 'Remove SVGs',
+        shouldRemove: (element : Element) : boolean | undefined => {
+            if (element.getLowerCaseTagName() === 'svg') {
+                return true
+            }
+        }
+    },
+    {
         name: 'Remove inherently non-visible elements',
         shouldRemove: (element : Element) : boolean | undefined => {
             if (['script', 'object', 'noscript', 'meta', 'style', 'source'].includes(element.getLowerCaseTagName())) {
@@ -46,7 +54,8 @@ const nodeRemoveRules : NodeRemoveRule[] = [
             if (!(node instanceof Text) && !(node instanceof Element)) {
                 return true
             }
-        }
+        },
+        log: false
     },
     {
         name: 'Remove empty text',
@@ -54,7 +63,8 @@ const nodeRemoveRules : NodeRemoveRule[] = [
             if (node instanceof Text && node.textContent?.trim() === '') {
                 return true
             }
-        }
+        },
+        log: false
     },
     {
         name: 'Remove non-visible childrenless elements',
@@ -62,13 +72,34 @@ const nodeRemoveRules : NodeRemoveRule[] = [
             if (element.childNodes.length === 0 && !element.hasIndependentMeaning() && !element.hasPseudoElement() && !element.getOriginalNode().isVisibleOnScreen()) {
                 return true
             }
-        }
+        },
+        log: false
     }
 ]
 
 const preChildrenActions : PreChildrenAction[] = [
     {
-        name: 'remove unnecessary attributes',
+        name: 'Remove tailwind classes',
+        action: (element : Element) => {
+            element.filterOutTailwindClasses()
+        }
+    },
+    {
+        name: 'Extract shadowroot',
+        action: (element : Element) => {
+            if (element.shadowRoot && element.shadowRoot.hasChildNodes()) {
+                console.log('extracting shadowroot for element', element.getOriginalElement())
+                let i = 0
+                for (let child of Array.from(element.shadowRoot.childNodes)) {
+                    i++;
+                    element.appendChild(child) // todo: prepend instead of append to keep order
+                }
+                console.log('extracted', i, 'nodes')
+            }
+        }
+    },
+    {
+        name: 'Remove unnecessary attributes',
         action: (element : Element) => {
             const simpleAttributes = new Set(['class', 'id', 'src', 'value', 'placeholder', 'title', 'aria-label', 'href'])
 
@@ -125,6 +156,23 @@ const preChildrenActions : PreChildrenAction[] = [
 
                 // @ts-ignore
                 window[newAttribute.value] = element.getOriginalElement()
+            }
+        }
+    },
+    {
+        name: 'Remove newlines from classnames',
+        action: (element: Element) => {
+            // replace new lines in classlist with spaces
+            if (typeof element.className.replace === 'function') {
+                element.className = element.className.replace(/\n/g, ' ')
+            }
+        }
+    },
+    {
+        name: 'Remove empty class attribute',
+        action: (element : Element) => {
+            if (element.className === '') {
+                element.removeAttribute('class')
             }
         }
     }

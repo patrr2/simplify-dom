@@ -6,21 +6,25 @@ export interface ElementUnfoldRule extends Rule { // Rule for unfolding elements
     name?: string
     shouldUnfold: (element : Element) => boolean | undefined 
     propagateAttributes?: boolean
+    log?: boolean
 }
 
 export interface ElementRemovePreChildrenRule extends Rule { // Rule for removing elements before their children are processed
     name?: string
     shouldRemove: (element : Element) => boolean | undefined
+    log?: boolean
 }
 
 export interface ElementRemoveRule extends Rule { // Rule for removing elements after their children are processed
     name?: string
     shouldRemove: (el : Element) => boolean | undefined
+    log?: boolean
 }
 
 export interface NodeRemoveRule extends Rule { // Rule for removing nodes
     name?: string
     shouldRemove: (el : Node) => boolean | undefined
+    log?: boolean
 }
 
 export interface PreChildrenAction { // Action to be performed on an element before its children are processed
@@ -45,7 +49,7 @@ const simplifyDom = (dom : Element, ruleSet: RuleSet) : Element => {
             
             for (let rule of ruleSet.elementRemovePreChildrenRules) {
                 if (rule.shouldRemove(element)) {
-                    console.log('removing', element.getOriginalNode(), 'on basis of', rule.name)
+                    if (rule.log !== false) console.log('removing', element.getOriginalNode(), 'on basis of', rule.name)
 
                     element.remove()
                     return false
@@ -63,7 +67,7 @@ const simplifyDom = (dom : Element, ruleSet: RuleSet) : Element => {
 
         for (let rule of ruleSet.nodeRemoveRules) {
             if (rule.shouldRemove(node)) {
-                console.log('removing', node, 'on basis of', rule.name)
+                if (rule.log !== false) console.log('removing', node, 'on basis of', rule.name)
 
                 // remove node from parent
                 node.parentNode?.removeChild(node)
@@ -77,7 +81,7 @@ const simplifyDom = (dom : Element, ruleSet: RuleSet) : Element => {
 
             for (let rule of ruleSet.elementUnfoldRules) {
                 if (rule.shouldUnfold(element)) {
-                    console.log('unfolding', element.getOriginalNode(), 'on basis of', rule.name)
+                    if (rule.log !== false) console.log('unfolding', element.getOriginalNode(), 'on basis of', rule.name)
 
                     const children = element.unfold((child : Node) => {
                         if (child instanceof Element) {
